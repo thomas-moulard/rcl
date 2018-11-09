@@ -26,6 +26,7 @@
 #include <future>
 #include <string>
 #include <thread>
+#include <array>
 
 #include "rcl/rcl.h"
 #include "rcl/graph.h"
@@ -315,137 +316,195 @@ check_graph_state(
   }
 }
 
+typedef std::function<rcl_ret_t (const rcl_node_t *,
+  const char * node_name,
+  rcl_names_and_types_t *)> GetTopicsFunc;
+
+void expect_topics_types(const rcl_node_t * node, GetTopicsFunc &func, size_t num_topics, const char * topic_name) {
+  rcl_ret_t ret;
+  rcl_names_and_types_t nat{};
+  nat = rcl_get_zero_initialized_names_and_types();
+  ret = func(node, topic_name, &nat);
+  EXPECT_EQ(num_topics, nat.names.size);
+  ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+  rcl_reset_error();
+  ret = rcl_names_and_types_fini(&nat);
+  rcl_reset_error();
+}
+
+/**
+ * This test creates publishers, subscribers, and services, then calls node graph functions
+ * from the perspective of each node.
+ * It verifies each node perceives the same graph.
+ */
 TEST_F(CLASSNAME(TestGraphFixture, RMW_IMPLEMENTATION), test_node_info_functions) {
-    std::string topic_name("/test_node_info_functions__");
-    std::chrono::nanoseconds now = std::chrono::system_clock::now().time_since_epoch();
-    topic_name += std::to_string(now.count());
-    RCUTILS_LOG_INFO_NAMED(ROS_PACKAGE_NAME, "Using topic name: %s", topic_name.c_str());
-    rcl_ret_t ret;
-    const rcl_guard_condition_t * graph_guard_condition =
-            rcl_node_get_graph_guard_condition(this->node_ptr);
+  std::string topic_name("/test_node_info_functions__");
+  std::chrono::nanoseconds now = std::chrono::system_clock::now().time_since_epoch();
+  topic_name += std::to_string(now.count());
+  RCUTILS_LOG_INFO_NAMED(ROS_PACKAGE_NAME, "Using topic name: %s", topic_name.c_str());
+  rcl_ret_t ret;
+  const rcl_guard_condition_t *graph_guard_condition =
+    rcl_node_get_graph_guard_condition(this->node_ptr);
 
-    auto remote_node_ptr = new rcl_node_t;
-    *remote_node_ptr = rcl_get_zero_initialized_node();
-    const char * remote_node_name = "remote_graph_node";
-    rcl_node_options_t node_options = rcl_node_get_default_options();
-    ret = rcl_node_init(remote_node_ptr, remote_node_name, "", &node_options);
-    ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+  const rcl_guard_condition_t *remote_graph_guard_condition =
+    rcl_node_get_graph_guard_condition(this->node_ptr);
 
-    // Now create a publisher on "topic_name" and check that it is seen.
-    rcl_publisher_t pub = rcl_get_zero_initialized_publisher();
-    rcl_publisher_options_t pub_ops = rcl_publisher_get_default_options();
-    auto ts = ROSIDL_GET_MSG_TYPE_SUPPORT(test_msgs, msg, Primitives);
-    ret = rcl_publisher_init(&pub, this->node_ptr, ts, topic_name.c_str(), &pub_ops);
+  auto remote_node_ptr = new rcl_node_t;
+  *remote_node_ptr = rcl_get_zero_initialized_node();
+  const char *remote_node_name = "remote_graph_node";
+  rcl_node_options_t node_options = rcl_node_get_default_options();
+  ret = rcl_node_init(remote_node_ptr, remote_node_name, "", &node_options);
+  ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+
+  // Now create a publisher on "topic_name" and check that it is seen.
+  rcl_publisher_t pub = rcl_get_zero_initialized_publisher();
+  rcl_publisher_options_t pub_ops = rcl_publisher_get_default_options();
+  auto ts = ROSIDL_GET_MSG_TYPE_SUPPORT(test_msgs, msg, Primitives);
+  ret = rcl_publisher_init(&pub, this->node_ptr, ts, topic_name.c_str(), &pub_ops);
+  EXPECT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+  rcl_reset_error();
+
+  // Now create two subscribers.
+  rcl_subscription_t sub = rcl_get_zero_initialized_subscription();
+  rcl_subscription_options_t sub_ops = rcl_subscription_get_default_options();
+  ret = rcl_subscription_init(&sub, this->node_ptr, ts, topic_name.c_str(), &sub_ops);
+  EXPECT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+  rcl_reset_error();
+
+  // Now create a subscriber.
+  rcl_subscription_t sub2 = rcl_get_zero_initialized_subscription();
+  rcl_subscription_options_t sub_ops2 = rcl_subscription_get_default_options();
+  ret = rcl_subscription_init(&sub2, remote_node_ptr, ts, topic_name.c_str(), &sub_ops2);
+  EXPECT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+  rcl_reset_error();
+
+  const char * service_name = "test_service";
+  rcl_service_t service = rcl_get_zero_initialized_service();
+  rcl_service_options_t service_options = rcl_service_get_default_options();
+  auto ts1 = ROSIDL_GET_SRV_TYPE_SUPPORT(test_msgs, Primitives);
+  ret = rcl_service_init(&service, this->node_ptr, ts1, service_name, &service_options);
+  ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+
+  rcl_allocator_t allocator = rcl_get_default_allocator();
+  size_t number_of_tries = 20;
+  check_graph_state(
+    this->node_ptr,
+    this->wait_set_ptr,
+    graph_guard_condition,
+    topic_name,
+    1,  // expected publishers on topic
+    2,  // expected subscribers on topic
+    true,  // topic expected in graph
+    number_of_tries);  // number of retries
+  check_graph_state(
+    remote_node_ptr,
+    this->wait_set_ptr,
+    remote_graph_guard_condition,
+    topic_name,
+    1,  // expected publishers on topic
+    2,  // expected subscribers on topic
+    true,  // topic expected in graph
+    number_of_tries);  // number of retries
+  GetTopicsFunc sub_func = std::bind(rcl_get_subscriber_names_and_types_by_node,
+                            std::placeholders::_1,
+                            &allocator,
+                            false,
+                            std::placeholders::_2,
+                            std::placeholders::_3);
+  GetTopicsFunc pub_func = std::bind(rcl_get_publisher_names_and_types_by_node,
+                                     std::placeholders::_1,
+                                     &allocator,
+                                     false,
+                                     std::placeholders::_2,
+                                     std::placeholders::_3);
+  GetTopicsFunc service_func = std::bind(rcl_get_service_names_and_types_by_node,
+                                     std::placeholders::_1,
+                                     &allocator,
+                                     std::placeholders::_2,
+                                     std::placeholders::_3);
+  std::array<rcl_node_t*, 2> node_array {remote_node_ptr, node_ptr};
+
+  // verify each node contains the same node graph.
+  for (auto node : node_array) {
+    expect_topics_types(node, sub_func, 1, "test_graph_node");
+    expect_topics_types(node, service_func, 1, "test_graph_node");
+    expect_topics_types(node, pub_func, 1, "test_graph_node");
+    expect_topics_types(node, sub_func, 1, remote_node_name);
+    expect_topics_types(node, pub_func, 0, remote_node_name);
+    expect_topics_types(node, service_func, 0, remote_node_name);
+  }
+  // Destroy the publisher.
+  ret = rcl_publisher_fini(&pub, this->node_ptr);
+  EXPECT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+  rcl_reset_error();
+  check_graph_state(
+    this->node_ptr,
+    this->wait_set_ptr,
+    graph_guard_condition,
+    topic_name,
+    0,  // expected publishers on topic
+    2,  // expected subscribers on topic
+    true,  // topic expected in graph
+    number_of_tries);  // number of retries
+  check_graph_state(
+    remote_node_ptr,
+    this->wait_set_ptr,
+    remote_graph_guard_condition,
+    topic_name,
+    0,  // expected publishers on topic
+    2,  // expected subscribers on topic
+    true,  // topic expected in graph
+    number_of_tries);  // number of retries
+  for (auto node : node_array) {
+    expect_topics_types(node, sub_func, 1, "test_graph_node");
+    expect_topics_types(node, service_func, 1, "test_graph_node");
+    expect_topics_types(node, pub_func, 0, "test_graph_node");
+    expect_topics_types(node, sub_func, 1, remote_node_name);
+    expect_topics_types(node, pub_func, 0, remote_node_name);
+    expect_topics_types(node, service_func, 0, remote_node_name);
+  }
+
+    // Destroy service.
+    ret = rcl_service_fini(&service, this->node_ptr);
+    EXPECT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+
+    // Destroy the subscriber.
+    ret = rcl_subscription_fini(&sub, this->node_ptr);
     EXPECT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
     rcl_reset_error();
 
-    // Now create two subscribers.
-    rcl_subscription_t sub = rcl_get_zero_initialized_subscription();
-    rcl_subscription_options_t sub_ops = rcl_subscription_get_default_options();
-    ret = rcl_subscription_init(&sub, this->node_ptr, ts, topic_name.c_str(), &sub_ops);
+    // Destroy the subscriber.
+    ret = rcl_subscription_fini(&sub2, remote_node_ptr);
     EXPECT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
     rcl_reset_error();
 
-    // Now create a subscriber.
-    rcl_subscription_t sub2 = rcl_get_zero_initialized_subscription();
-    rcl_subscription_options_t sub_ops2 = rcl_subscription_get_default_options();
-    ret = rcl_subscription_init(&sub2, remote_node_ptr, ts, topic_name.c_str(), &sub_ops2);
-    EXPECT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
-    rcl_reset_error();
-
-    rcl_allocator_t allocator = rcl_get_default_allocator();
-    size_t expected_publisher_count = 1;
-    size_t expected_subscriber_count = 2;
-    size_t publisher_count, subscriber_count;
-    size_t number_of_tries = 4;
-    for (size_t i = 0; i < number_of_tries; ++i) {
-        ret = rcl_count_publishers(remote_node_ptr, topic_name.c_str(), &publisher_count);
-        ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
-        rcl_reset_error();
-
-        ret = rcl_count_subscribers(remote_node_ptr, topic_name.c_str(), &subscriber_count);
-        ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
-        rcl_reset_error();
-
-        if (RCL_RET_OK == ret) {
-            ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
-            rcl_reset_error();
-        }
-
-        RCUTILS_LOG_INFO_NAMED(ROS_PACKAGE_NAME,
-                               " Try %zu: %zu publishers, %zu subscribers.",
-                               i + 1,
-                               publisher_count,
-                               subscriber_count
-        );
-        if (expected_publisher_count == publisher_count &&
-                expected_subscriber_count == subscriber_count)
-        {
-            RCUTILS_LOG_INFO_NAMED(ROS_PACKAGE_NAME, "  state correct!");
-            break;
-        }
-        // Wait for graph change before trying again.
-        if ((i + 1) == number_of_tries) {
-            // Don't wait for the graph to change on the last loop because we won't check again.
-            continue;
-        }
-        ret = rcl_wait_set_clear(wait_set_ptr);
-        ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
-        ret = rcl_wait_set_add_guard_condition(wait_set_ptr, graph_guard_condition);
-        ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
-        std::chrono::nanoseconds time_to_sleep = std::chrono::milliseconds(200);
-        RCUTILS_LOG_INFO_NAMED(ROS_PACKAGE_NAME,
-                               "  state wrong, waiting up to '%s' nanoseconds for graph changes... ",
-                               std::to_string(time_to_sleep.count()).c_str());
-        ret = rcl_wait(wait_set_ptr, time_to_sleep.count());
-        if (ret == RCL_RET_TIMEOUT) {
-            RCUTILS_LOG_INFO_NAMED(ROS_PACKAGE_NAME, "timeout");
-            continue;
-        }
-        RCUTILS_LOG_INFO_NAMED(ROS_PACKAGE_NAME, "change occurred");
-        ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
-    }
-    std::chrono::nanoseconds time_to_sleep = std::chrono::milliseconds(500);
-    rcl_names_and_types_t publishers_nat {};
-    publishers_nat = rcl_get_zero_initialized_names_and_types();
-    ret = rcl_get_publisher_names_and_types_by_node(remote_node_ptr, &allocator, false, "test_graph_node", &publishers_nat);
-    EXPECT_EQ((size_t)1, publishers_nat.names.size);
-    ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
-    rcl_reset_error();
-    ret = rcl_names_and_types_fini(&publishers_nat);
-    rcl_reset_error();
-
-    rcl_names_and_types_t sub_nat {};
-    sub_nat = rcl_get_zero_initialized_names_and_types();
-    ret = rcl_get_subscriber_names_and_types_by_node(remote_node_ptr, &allocator, false, "test_graph_node", &sub_nat);
-    EXPECT_EQ((size_t)1, sub_nat.names.size);
-    ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
-    rcl_reset_error();
-    ret = rcl_names_and_types_fini(&sub_nat);
-    rcl_reset_error();
-
-    rcl_names_and_types_t sub_remote_nat_remote_name {};
-    sub_remote_nat_remote_name = rcl_get_zero_initialized_names_and_types();
-    ret = rcl_get_subscriber_names_and_types_by_node(
-            remote_node_ptr, &allocator, false, remote_node_name, &sub_remote_nat_remote_name);
-    EXPECT_EQ((size_t)1, sub_remote_nat_remote_name.names.size);
-    ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
-    rcl_reset_error();
-    ret = rcl_names_and_types_fini(&sub_remote_nat_remote_name);
-    rcl_reset_error();
-
-    rcl_names_and_types_t sub_remote_nat {};
-    sub_remote_nat = rcl_get_zero_initialized_names_and_types();
-    ret = rcl_get_subscriber_names_and_types_by_node(node_ptr, &allocator, false, remote_node_name, &sub_remote_nat);
-    EXPECT_EQ((size_t)1, sub_remote_nat.names.size);
-    ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
-    rcl_reset_error();
-    ret = rcl_names_and_types_fini(&sub_remote_nat);
-    rcl_reset_error();
-
-    ret = rcl_node_fini(remote_node_ptr);
-    rcl_reset_error();
-    delete remote_node_ptr;
+    check_graph_state(
+      this->node_ptr,
+      this->wait_set_ptr,
+      graph_guard_condition,
+      topic_name,
+      0,  // expected publishers on topic
+      0,  // expected subscribers on topic
+      false,  // topic expected in graph
+      number_of_tries);  // number of retries
+    check_graph_state(
+      remote_node_ptr,
+      this->wait_set_ptr,
+      remote_graph_guard_condition,
+      topic_name,
+      0,  // expected publishers on topic
+      0,  // expected subscribers on topic
+      false,  // topic expected in graph
+      number_of_tries);  // number of retries
+  for (auto node : node_array) {
+    expect_topics_types(node, sub_func, 0, "test_graph_node");
+    expect_topics_types(node, service_func, 0, "test_graph_node");
+    expect_topics_types(node, pub_func, 0, "test_graph_node");
+    expect_topics_types(node, sub_func, 0, remote_node_name);
+    expect_topics_types(node, pub_func, 0, remote_node_name);
+    expect_topics_types(node, service_func, 0, remote_node_name);
+  }
+  delete remote_node_ptr;
 }
 /*
  * Test graph queries with a hand crafted graph.
