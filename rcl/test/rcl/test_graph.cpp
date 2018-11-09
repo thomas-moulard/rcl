@@ -31,6 +31,7 @@
 #include "rcl/graph.h"
 
 #include "rcutils/logging_macros.h"
+#include "rcutils/logging.h"
 
 #include "test_msgs/msg/primitives.h"
 #include "test_msgs/srv/primitives.h"
@@ -56,6 +57,9 @@ public:
   rcl_wait_set_t * wait_set_ptr;
   void SetUp()
   {
+    rcutils_logging_set_logger_level("rmw_fastrtps_shared_cpp",
+            RCUTILS_LOG_SEVERITY::RCUTILS_LOG_SEVERITY_DEBUG);
+
     rcl_ret_t ret;
     ret = rcl_init(0, nullptr, rcl_get_default_allocator());
     ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
@@ -239,6 +243,7 @@ check_graph_state(
   rcl_names_and_types_t tnat {};
   rcl_ret_t ret;
   rcl_allocator_t allocator = rcl_get_default_allocator();
+
   for (size_t i = 0; i < number_of_tries; ++i) {
     ret = rcl_count_publishers(node_ptr, topic_name.c_str(), &publisher_count);
     ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
@@ -310,7 +315,140 @@ check_graph_state(
   }
 }
 
-/* Test graph queries with a hand crafted graph.
+TEST_F(CLASSNAME(TestGraphFixture, RMW_IMPLEMENTATION), test_node_info_functions) {
+    std::string topic_name("/test_node_info_functions__");
+    std::chrono::nanoseconds now = std::chrono::system_clock::now().time_since_epoch();
+    topic_name += std::to_string(now.count());
+    RCUTILS_LOG_INFO_NAMED(ROS_PACKAGE_NAME, "Using topic name: %s", topic_name.c_str());
+    rcl_ret_t ret;
+    const rcl_guard_condition_t * graph_guard_condition =
+            rcl_node_get_graph_guard_condition(this->node_ptr);
+
+    auto remote_node_ptr = new rcl_node_t;
+    *remote_node_ptr = rcl_get_zero_initialized_node();
+    const char * remote_node_name = "remote_graph_node";
+    rcl_node_options_t node_options = rcl_node_get_default_options();
+    ret = rcl_node_init(remote_node_ptr, remote_node_name, "", &node_options);
+    ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+
+    // Now create a publisher on "topic_name" and check that it is seen.
+    rcl_publisher_t pub = rcl_get_zero_initialized_publisher();
+    rcl_publisher_options_t pub_ops = rcl_publisher_get_default_options();
+    auto ts = ROSIDL_GET_MSG_TYPE_SUPPORT(test_msgs, msg, Primitives);
+    ret = rcl_publisher_init(&pub, this->node_ptr, ts, topic_name.c_str(), &pub_ops);
+    EXPECT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+    rcl_reset_error();
+
+    // Now create two subscribers.
+    rcl_subscription_t sub = rcl_get_zero_initialized_subscription();
+    rcl_subscription_options_t sub_ops = rcl_subscription_get_default_options();
+    ret = rcl_subscription_init(&sub, this->node_ptr, ts, topic_name.c_str(), &sub_ops);
+    EXPECT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+    rcl_reset_error();
+
+    // Now create a subscriber.
+    rcl_subscription_t sub2 = rcl_get_zero_initialized_subscription();
+    rcl_subscription_options_t sub_ops2 = rcl_subscription_get_default_options();
+    ret = rcl_subscription_init(&sub2, remote_node_ptr, ts, topic_name.c_str(), &sub_ops2);
+    EXPECT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+    rcl_reset_error();
+
+    rcl_allocator_t allocator = rcl_get_default_allocator();
+    size_t expected_publisher_count = 1;
+    size_t expected_subscriber_count = 2;
+    size_t publisher_count, subscriber_count;
+    size_t number_of_tries = 4;
+    for (size_t i = 0; i < number_of_tries; ++i) {
+        ret = rcl_count_publishers(remote_node_ptr, topic_name.c_str(), &publisher_count);
+        ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+        rcl_reset_error();
+
+        ret = rcl_count_subscribers(remote_node_ptr, topic_name.c_str(), &subscriber_count);
+        ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+        rcl_reset_error();
+
+        if (RCL_RET_OK == ret) {
+            ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+            rcl_reset_error();
+        }
+
+        RCUTILS_LOG_INFO_NAMED(ROS_PACKAGE_NAME,
+                               " Try %zu: %zu publishers, %zu subscribers.",
+                               i + 1,
+                               publisher_count,
+                               subscriber_count
+        );
+        if (expected_publisher_count == publisher_count &&
+                expected_subscriber_count == subscriber_count)
+        {
+            RCUTILS_LOG_INFO_NAMED(ROS_PACKAGE_NAME, "  state correct!");
+            break;
+        }
+        // Wait for graph change before trying again.
+        if ((i + 1) == number_of_tries) {
+            // Don't wait for the graph to change on the last loop because we won't check again.
+            continue;
+        }
+        ret = rcl_wait_set_clear(wait_set_ptr);
+        ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+        ret = rcl_wait_set_add_guard_condition(wait_set_ptr, graph_guard_condition);
+        ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+        std::chrono::nanoseconds time_to_sleep = std::chrono::milliseconds(200);
+        RCUTILS_LOG_INFO_NAMED(ROS_PACKAGE_NAME,
+                               "  state wrong, waiting up to '%s' nanoseconds for graph changes... ",
+                               std::to_string(time_to_sleep.count()).c_str());
+        ret = rcl_wait(wait_set_ptr, time_to_sleep.count());
+        if (ret == RCL_RET_TIMEOUT) {
+            RCUTILS_LOG_INFO_NAMED(ROS_PACKAGE_NAME, "timeout");
+            continue;
+        }
+        RCUTILS_LOG_INFO_NAMED(ROS_PACKAGE_NAME, "change occurred");
+        ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+    }
+    std::chrono::nanoseconds time_to_sleep = std::chrono::milliseconds(500);
+    rcl_names_and_types_t publishers_nat {};
+    publishers_nat = rcl_get_zero_initialized_names_and_types();
+    ret = rcl_get_publisher_names_and_types_by_node(remote_node_ptr, &allocator, false, "test_graph_node", &publishers_nat);
+    EXPECT_EQ((size_t)1, publishers_nat.names.size);
+    ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+    rcl_reset_error();
+    ret = rcl_names_and_types_fini(&publishers_nat);
+    rcl_reset_error();
+
+    rcl_names_and_types_t sub_nat {};
+    sub_nat = rcl_get_zero_initialized_names_and_types();
+    ret = rcl_get_subscriber_names_and_types_by_node(remote_node_ptr, &allocator, false, "test_graph_node", &sub_nat);
+    EXPECT_EQ((size_t)1, sub_nat.names.size);
+    ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+    rcl_reset_error();
+    ret = rcl_names_and_types_fini(&sub_nat);
+    rcl_reset_error();
+
+    rcl_names_and_types_t sub_remote_nat_remote_name {};
+    sub_remote_nat_remote_name = rcl_get_zero_initialized_names_and_types();
+    ret = rcl_get_subscriber_names_and_types_by_node(
+            remote_node_ptr, &allocator, false, remote_node_name, &sub_remote_nat_remote_name);
+    EXPECT_EQ((size_t)1, sub_remote_nat_remote_name.names.size);
+    ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+    rcl_reset_error();
+    ret = rcl_names_and_types_fini(&sub_remote_nat_remote_name);
+    rcl_reset_error();
+
+    rcl_names_and_types_t sub_remote_nat {};
+    sub_remote_nat = rcl_get_zero_initialized_names_and_types();
+    ret = rcl_get_subscriber_names_and_types_by_node(node_ptr, &allocator, false, remote_node_name, &sub_remote_nat);
+    EXPECT_EQ((size_t)1, sub_remote_nat.names.size);
+    ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+    rcl_reset_error();
+    ret = rcl_names_and_types_fini(&sub_remote_nat);
+    rcl_reset_error();
+
+    ret = rcl_node_fini(remote_node_ptr);
+    rcl_reset_error();
+    delete remote_node_ptr;
+}
+/*
+ * Test graph queries with a hand crafted graph.
  */
 TEST_F(CLASSNAME(TestGraphFixture, RMW_IMPLEMENTATION), test_graph_query_functions) {
   std::string topic_name("/test_graph_query_functions__");
