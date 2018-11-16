@@ -58,9 +58,6 @@ public:
   rcl_wait_set_t * wait_set_ptr;
   void SetUp()
   {
-    rcutils_logging_set_logger_level("rmw_fastrtps_shared_cpp",
-            RCUTILS_LOG_SEVERITY::RCUTILS_LOG_SEVERITY_DEBUG);
-
     rcl_ret_t ret;
     ret = rcl_init(0, nullptr, rcl_get_default_allocator());
     ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
@@ -387,6 +384,23 @@ TEST_F(CLASSNAME(TestGraphFixture, RMW_IMPLEMENTATION), test_node_info_functions
 
   rcl_allocator_t allocator = rcl_get_default_allocator();
   size_t number_of_tries = 20;
+  rcutils_string_array_t node_names = rcutils_get_zero_initialized_string_array();
+  rcutils_string_array_t node_namespaces = rcutils_get_zero_initialized_string_array();
+  OSRF_TESTING_TOOLS_CPP_SCOPE_EXIT({
+                                      ret = rcutils_string_array_fini(&node_names);
+                                      ASSERT_EQ(RCUTILS_RET_OK, ret);
+                                      ret = rcutils_string_array_fini(&node_namespaces);
+                                      ASSERT_EQ(RCUTILS_RET_OK, ret);
+                                  });
+  size_t attempts = 0;
+  size_t max_attempts = 4;
+  while (node_names.size < 3) {
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    ret = rcl_get_node_names(remote_node_ptr, allocator, &node_names, &node_namespaces);
+    attempts++;
+    ASSERT_LE(attempts, max_attempts) << "Unable to attain all required nodes";
+  }
+
   check_graph_state(
     this->node_ptr,
     this->wait_set_ptr,
@@ -406,21 +420,24 @@ TEST_F(CLASSNAME(TestGraphFixture, RMW_IMPLEMENTATION), test_node_info_functions
     true,  // topic expected in graph
     number_of_tries);  // number of retries
   GetTopicsFunc sub_func = std::bind(rcl_get_subscriber_names_and_types_by_node,
-                            std::placeholders::_1,
-                            &allocator,
-                            false,
-                            std::placeholders::_2,
-                            std::placeholders::_3);
+                                     std::placeholders::_1,
+                                     &allocator,
+                                     false,
+                                     std::placeholders::_2,
+                                     "/",
+                                     std::placeholders::_3);
   GetTopicsFunc pub_func = std::bind(rcl_get_publisher_names_and_types_by_node,
                                      std::placeholders::_1,
                                      &allocator,
                                      false,
                                      std::placeholders::_2,
+                                     "/",
                                      std::placeholders::_3);
   GetTopicsFunc service_func = std::bind(rcl_get_service_names_and_types_by_node,
                                      std::placeholders::_1,
                                      &allocator,
                                      std::placeholders::_2,
+                                     "/",
                                      std::placeholders::_3);
   std::array<rcl_node_t*, 2> node_array {remote_node_ptr, node_ptr};
 
@@ -464,38 +481,38 @@ TEST_F(CLASSNAME(TestGraphFixture, RMW_IMPLEMENTATION), test_node_info_functions
     expect_topics_types(node, service_func, 0, remote_node_name);
   }
 
-    // Destroy service.
-    ret = rcl_service_fini(&service, this->node_ptr);
-    EXPECT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+  // Destroy service.
+  ret = rcl_service_fini(&service, this->node_ptr);
+  EXPECT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
 
-    // Destroy the subscriber.
-    ret = rcl_subscription_fini(&sub, this->node_ptr);
-    EXPECT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
-    rcl_reset_error();
+  // Destroy subscriber.
+  ret = rcl_subscription_fini(&sub, this->node_ptr);
+  EXPECT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+  rcl_reset_error();
 
-    // Destroy the subscriber.
-    ret = rcl_subscription_fini(&sub2, remote_node_ptr);
-    EXPECT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
-    rcl_reset_error();
+  // Destroy subscriber.
+  ret = rcl_subscription_fini(&sub2, remote_node_ptr);
+  EXPECT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+  rcl_reset_error();
 
-    check_graph_state(
-      this->node_ptr,
-      this->wait_set_ptr,
-      graph_guard_condition,
-      topic_name,
-      0,  // expected publishers on topic
-      0,  // expected subscribers on topic
-      false,  // topic expected in graph
-      number_of_tries);  // number of retries
-    check_graph_state(
-      remote_node_ptr,
-      this->wait_set_ptr,
-      remote_graph_guard_condition,
-      topic_name,
-      0,  // expected publishers on topic
-      0,  // expected subscribers on topic
-      false,  // topic expected in graph
-      number_of_tries);  // number of retries
+  check_graph_state(
+    this->node_ptr,
+    this->wait_set_ptr,
+    graph_guard_condition,
+    topic_name,
+    0,  // expected publishers on topic
+    0,  // expected subscribers on topic
+    false,  // topic expected in graph
+    number_of_tries);  // number of retries
+  check_graph_state(
+    remote_node_ptr,
+    this->wait_set_ptr,
+    remote_graph_guard_condition,
+    topic_name,
+    0,  // expected publishers on topic
+    0,  // expected subscribers on topic
+    false,  // topic expected in graph
+    number_of_tries);  // number of retries
   for (auto node : node_array) {
     expect_topics_types(node, sub_func, 0, "test_graph_node");
     expect_topics_types(node, service_func, 0, "test_graph_node");
