@@ -22,9 +22,9 @@ extern "C"
 #include "rcl/error_handling.h"
 #include "rcutils/allocator.h"
 #include "rcutils/types.h"
+#include "rmw/get_node_info_and_types.h"
 #include "rmw/get_service_names_and_types.h"
 #include "rmw/get_topic_names_and_types.h"
-#include "rmw/get_node_info_and_types.h"
 #include "rmw/names_and_types.h"
 #include "rmw/rmw.h"
 
@@ -39,15 +39,14 @@ rcl_get_publisher_names_and_types_by_node(
         const char * node_namespace,
         rcl_names_and_types_t * topic_names_and_types)
 {
+    if (!rcl_node_is_valid(node)) {
+        return RCL_RET_NODE_INVALID;
+    }
     RCL_CHECK_ARGUMENT_FOR_NULL(allocator, RCL_RET_INVALID_ARGUMENT);
-    RCL_CHECK_ARGUMENT_FOR_NULL(node, RCL_RET_INVALID_ARGUMENT);
     RCL_CHECK_ARGUMENT_FOR_NULL(node_namespace, RCL_RET_INVALID_ARGUMENT);
     const char * valid_namespace = "/";
     if (strlen(node_namespace) > 0) {
         valid_namespace = node_namespace;
-    }
-    if (!rcl_node_is_valid(node)) {
-        return RCL_RET_NODE_INVALID;
     }
     RCL_CHECK_ARGUMENT_FOR_NULL(topic_names_and_types, RCL_RET_INVALID_ARGUMENT);
     rmw_ret_t rmw_ret;
@@ -77,14 +76,13 @@ rcl_get_subscriber_names_and_types_by_node(
         rcl_names_and_types_t * topic_names_and_types)
 {
     RCL_CHECK_ARGUMENT_FOR_NULL(allocator, RCL_RET_INVALID_ARGUMENT);
-    RCL_CHECK_ARGUMENT_FOR_NULL(node, RCL_RET_INVALID_ARGUMENT);
     RCL_CHECK_ARGUMENT_FOR_NULL(node_namespace, RCL_RET_INVALID_ARGUMENT);
+    if (!rcl_node_is_valid(node)) {
+        return RCL_RET_NODE_INVALID;
+    }
     const char * valid_namespace = "/";
     if (strlen(node_namespace) > 0) {
         valid_namespace = node_namespace;
-    }
-    if (!rcl_node_is_valid(node)) {
-        return RCL_RET_NODE_INVALID;
     }
     RCL_CHECK_ARGUMENT_FOR_NULL(topic_names_and_types, RCL_RET_INVALID_ARGUMENT);
     rmw_ret_t rmw_ret;
@@ -112,7 +110,6 @@ rcl_get_service_names_and_types_by_node(
         const char * node_namespace,
         rcl_names_and_types_t * service_names_and_types)
 {
-    RCL_CHECK_ARGUMENT_FOR_NULL(node, RCL_RET_INVALID_ARGUMENT);
     if (!rcl_node_is_valid(node)) {
         return RCL_RET_NODE_INVALID;
     }
