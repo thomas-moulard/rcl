@@ -21,6 +21,7 @@ extern "C"
 
 #include <stdio.h>
 
+#include "./common.h"
 #include "rcl/error_handling.h"
 #include "rcl/expand_topic_name.h"
 #include "rcl/remap.h"
@@ -126,7 +127,7 @@ rcl_subscription_init(
   }
   rcl_arguments_t * global_args = NULL;
   if (node_options->use_global_arguments) {
-    global_args = rcl_get_global_arguments();
+    global_args = &(node->context->global_arguments);
   }
   ret = rcl_remap_topic_name(
     &(node_options->arguments), global_args, expanded_topic_name,
@@ -196,7 +197,7 @@ rcl_subscription_fini(rcl_subscription_t * subscription, rcl_node_t * node)
   RCUTILS_LOG_DEBUG_NAMED(ROS_PACKAGE_NAME, "Finalizing subscription");
   rcl_ret_t result = RCL_RET_OK;
   RCL_CHECK_ARGUMENT_FOR_NULL(subscription, RCL_RET_SUBSCRIPTION_INVALID);
-  if (!rcl_node_is_valid(node)) {
+  if (!rcl_node_is_valid_except_context(node)) {
     return RCL_RET_NODE_INVALID;  // error already set
   }
   if (subscription->impl) {
@@ -335,6 +336,25 @@ rcl_subscription_is_valid(const rcl_subscription_t * subscription)
   RCL_CHECK_FOR_NULL_WITH_MSG(
     subscription->impl->rmw_handle, "subscription's rmw handle is invalid", return false);
   return true;
+}
+
+rmw_ret_t
+rcl_subscription_get_publisher_count(
+  const rcl_subscription_t * subscription,
+  size_t * publisher_count)
+{
+  if (!rcl_subscription_is_valid(subscription)) {
+    return RCL_RET_SUBSCRIPTION_INVALID;
+  }
+  RCL_CHECK_ARGUMENT_FOR_NULL(publisher_count, RCL_RET_INVALID_ARGUMENT);
+  rmw_ret_t ret = rmw_subscription_count_matched_publishers(subscription->impl->rmw_handle,
+      publisher_count);
+
+  if (ret != RMW_RET_OK) {
+    RCL_SET_ERROR_MSG(rmw_get_error_string().str);
+    return rcl_convert_rmw_ret_to_rcl_ret(ret);
+  }
+  return RCL_RET_OK;
 }
 
 #ifdef __cplusplus
