@@ -50,7 +50,9 @@ TEST_F(CLASSNAME(TestRemapIntegrationFixture, RMW_IMPLEMENTATION), remap_using_g
 
   rcl_node_t node = rcl_get_zero_initialized_node();
   rcl_node_options_t default_options = rcl_node_get_default_options();
-  ASSERT_EQ(RCL_RET_OK, rcl_node_init(&node, "original_name", "/original_ns", &default_options));
+  ASSERT_EQ(
+    RCL_RET_OK,
+    rcl_node_init(&node, "original_name", "/original_ns", &context, &default_options));
 
   {  // Node name gets remapped
     EXPECT_STREQ("new_name", rcl_node_get_name(&node));
@@ -84,7 +86,7 @@ TEST_F(CLASSNAME(TestRemapIntegrationFixture, RMW_IMPLEMENTATION), remap_using_g
   }
   {  // Client service name gets remapped
     const rosidl_service_type_support_t * ts = ROSIDL_GET_SRV_TYPE_SUPPORT(
-      test_msgs, Primitives);
+      test_msgs, srv, Primitives);
     rcl_client_options_t client_options = rcl_client_get_default_options();
     rcl_client_t client = rcl_get_zero_initialized_client();
     rcl_ret_t ret = rcl_client_init(&client, &node, ts, "/foo/bar", &client_options);
@@ -94,7 +96,7 @@ TEST_F(CLASSNAME(TestRemapIntegrationFixture, RMW_IMPLEMENTATION), remap_using_g
   }
   {  // Server service name gets remapped
     const rosidl_service_type_support_t * ts = ROSIDL_GET_SRV_TYPE_SUPPORT(
-      test_msgs, Primitives);
+      test_msgs, srv, Primitives);
     rcl_service_options_t service_options = rcl_service_get_default_options();
     rcl_service_t service = rcl_get_zero_initialized_service();
     rcl_ret_t ret = rcl_service_init(&service, &node, ts, "/foo/bar", &service_options);
@@ -118,7 +120,7 @@ TEST_F(CLASSNAME(TestRemapIntegrationFixture, RMW_IMPLEMENTATION), ignore_global
   rcl_node_options_t options = rcl_node_get_default_options();
   options.use_global_arguments = false;
   options.arguments = local_arguments;
-  ASSERT_EQ(RCL_RET_OK, rcl_node_init(&node, "original_name", "/original_ns", &options));
+  ASSERT_EQ(RCL_RET_OK, rcl_node_init(&node, "original_name", "/original_ns", &context, &options));
 
   {  // Node name does not get remapped
     EXPECT_STREQ("original_name", rcl_node_get_name(&node));
@@ -152,7 +154,7 @@ TEST_F(CLASSNAME(TestRemapIntegrationFixture, RMW_IMPLEMENTATION), ignore_global
   }
   {  // Client service name does not get remapped
     const rosidl_service_type_support_t * ts = ROSIDL_GET_SRV_TYPE_SUPPORT(
-      test_msgs, Primitives);
+      test_msgs, srv, Primitives);
     rcl_client_options_t client_options = rcl_client_get_default_options();
     rcl_client_t client = rcl_get_zero_initialized_client();
     rcl_ret_t ret = rcl_client_init(&client, &node, ts, "/foo/bar", &client_options);
@@ -162,7 +164,7 @@ TEST_F(CLASSNAME(TestRemapIntegrationFixture, RMW_IMPLEMENTATION), ignore_global
   }
   {  // Server service name does not get remapped
     const rosidl_service_type_support_t * ts = ROSIDL_GET_SRV_TYPE_SUPPORT(
-      test_msgs, Primitives);
+      test_msgs, srv, Primitives);
     rcl_service_options_t service_options = rcl_service_get_default_options();
     rcl_service_t service = rcl_get_zero_initialized_service();
     rcl_ret_t ret = rcl_service_init(&service, &node, ts, "/foo/bar", &service_options);
@@ -187,7 +189,7 @@ TEST_F(CLASSNAME(TestRemapIntegrationFixture, RMW_IMPLEMENTATION), local_rules_b
   rcl_node_t node = rcl_get_zero_initialized_node();
   rcl_node_options_t options = rcl_node_get_default_options();
   options.arguments = local_arguments;
-  ASSERT_EQ(RCL_RET_OK, rcl_node_init(&node, "original_name", "/original_ns", &options));
+  ASSERT_EQ(RCL_RET_OK, rcl_node_init(&node, "original_name", "/original_ns", &context, &options));
 
   {  // Node name
     EXPECT_STREQ("local_name", rcl_node_get_name(&node));
@@ -221,7 +223,7 @@ TEST_F(CLASSNAME(TestRemapIntegrationFixture, RMW_IMPLEMENTATION), local_rules_b
   }
   {  // Client service name
     const rosidl_service_type_support_t * ts = ROSIDL_GET_SRV_TYPE_SUPPORT(
-      test_msgs, Primitives);
+      test_msgs, srv, Primitives);
     rcl_client_options_t client_options = rcl_client_get_default_options();
     rcl_client_t client = rcl_get_zero_initialized_client();
     rcl_ret_t ret = rcl_client_init(&client, &node, ts, "/foo/bar", &client_options);
@@ -231,7 +233,7 @@ TEST_F(CLASSNAME(TestRemapIntegrationFixture, RMW_IMPLEMENTATION), local_rules_b
   }
   {  // Server service name
     const rosidl_service_type_support_t * ts = ROSIDL_GET_SRV_TYPE_SUPPORT(
-      test_msgs, Primitives);
+      test_msgs, srv, Primitives);
     rcl_service_options_t service_options = rcl_service_get_default_options();
     rcl_service_t service = rcl_get_zero_initialized_service();
     rcl_ret_t ret = rcl_service_init(&service, &node, ts, "/foo/bar", &service_options);
@@ -250,7 +252,7 @@ TEST_F(CLASSNAME(TestRemapIntegrationFixture, RMW_IMPLEMENTATION), remap_relativ
 
   rcl_node_t node = rcl_get_zero_initialized_node();
   rcl_node_options_t default_options = rcl_node_get_default_options();
-  ASSERT_EQ(RCL_RET_OK, rcl_node_init(&node, "original_name", "/foo", &default_options));
+  ASSERT_EQ(RCL_RET_OK, rcl_node_init(&node, "original_name", "/foo", &context, &default_options));
 
   {  // Publisher topic
     const rosidl_message_type_support_t * ts =
@@ -275,7 +277,7 @@ TEST_F(CLASSNAME(TestRemapIntegrationFixture, RMW_IMPLEMENTATION), remap_relativ
   }
   {  // Client service name
     const rosidl_service_type_support_t * ts = ROSIDL_GET_SRV_TYPE_SUPPORT(
-      test_msgs, Primitives);
+      test_msgs, srv, Primitives);
     rcl_client_options_t client_options = rcl_client_get_default_options();
     rcl_client_t client = rcl_get_zero_initialized_client();
     rcl_ret_t ret = rcl_client_init(&client, &node, ts, "bar", &client_options);
@@ -285,7 +287,7 @@ TEST_F(CLASSNAME(TestRemapIntegrationFixture, RMW_IMPLEMENTATION), remap_relativ
   }
   {  // Server service name
     const rosidl_service_type_support_t * ts = ROSIDL_GET_SRV_TYPE_SUPPORT(
-      test_msgs, Primitives);
+      test_msgs, srv, Primitives);
     rcl_service_options_t service_options = rcl_service_get_default_options();
     rcl_service_t service = rcl_get_zero_initialized_service();
     rcl_ret_t ret = rcl_service_init(&service, &node, ts, "bar", &service_options);
@@ -305,7 +307,7 @@ TEST_F(CLASSNAME(TestRemapIntegrationFixture, RMW_IMPLEMENTATION), remap_using_n
 
   rcl_node_t node = rcl_get_zero_initialized_node();
   rcl_node_options_t default_options = rcl_node_get_default_options();
-  ASSERT_EQ(RCL_RET_OK, rcl_node_init(&node, "original_name", "", &default_options));
+  ASSERT_EQ(RCL_RET_OK, rcl_node_init(&node, "original_name", "", &context, &default_options));
 
   {  // Node namespace gets remapped
     EXPECT_STREQ("/new_ns", rcl_node_get_namespace(&node));

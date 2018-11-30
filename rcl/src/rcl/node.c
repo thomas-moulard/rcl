@@ -44,8 +44,9 @@ extern "C"
 #include "rmw/validate_node_name.h"
 
 #include "./common.h"
+#include "./context_impl.h"
 
-
+#define ROS_SECURITY_NODE_DIRECTORY_VAR_NAME "ROS_SECURITY_NODE_DIRECTORY"
 #define ROS_SECURITY_ROOT_DIRECTORY_VAR_NAME "ROS_SECURITY_ROOT_DIRECTORY"
 #define ROS_SECURITY_STRATEGY_VAR_NAME "ROS_SECURITY_STRATEGY"
 #define ROS_SECURITY_ENABLE_VAR_NAME "ROS_SECURITY_ENABLE"
@@ -55,7 +56,6 @@ typedef struct rcl_node_impl_t
   rcl_node_options_t options;
   size_t actual_domain_id;
   rmw_node_t * rmw_node_handle;
-  uint64_t rcl_instance_id;
   rcl_guard_condition_t * graph_guard_condition;
   const char * logger_name;
 } rcl_node_impl_t;
@@ -99,24 +99,80 @@ const char * rcl_create_node_logger_name(
   return node_logger_name;
 }
 
-const char * rcl_get_secure_root(const char * node_name, const rcl_allocator_t * allocator)
+/// Return the secure root directory associated with a node given its validated name and namespace.
+/**
+ * E.g. for a node named "c" in namespace "/a/b", the secure root path will be
+ * "a/b/c", where the delimiter "/" is native for target file system (e.g. "\\" for _WIN32).
+ * However, this expansion can be overridden by setting the secure node directory environment
+ * variable, allowing users to explicitly specify the exact secure root directory to be utilized.
+ * Such an override is useful for where the FQN of a node is non-deterministic before runtime,
+ * or when testing and using additional tools that may not otherwise not be easily provisioned.
+ *
+ * \param[in] node_name validated node name (a single token)
+ * \param[in] node_namespace validated, absolute namespace (starting with "/")
+ * \param[in] allocator the allocator to use for allocation
+ * \returns machine specific (absolute) node secure root path or NULL on failure
+ */
+const char * rcl_get_secure_root(
+  const char * node_name,
+  const char * node_namespace,
+  const rcl_allocator_t * allocator)
 {
+  bool ros_secure_node_override = true;
   const char * ros_secure_root_env = NULL;
   if (NULL == node_name) {
     return NULL;
   }
-  if (rcutils_get_env(ROS_SECURITY_ROOT_DIRECTORY_VAR_NAME, &ros_secure_root_env)) {
+  if (rcutils_get_env(ROS_SECURITY_NODE_DIRECTORY_VAR_NAME, &ros_secure_root_env)) {
     return NULL;
   }
   if (!ros_secure_root_env) {
-    return NULL;  // environment variable not defined
+    return NULL;
   }
   size_t ros_secure_root_size = strlen(ros_secure_root_env);
   if (!ros_secure_root_size) {
-    return NULL;  // environment variable was empty
+    // check root directory if node directory environment variable is empty
+    if (rcutils_get_env(ROS_SECURITY_ROOT_DIRECTORY_VAR_NAME, &ros_secure_root_env)) {
+      return NULL;
+    }
+    if (!ros_secure_root_env) {
+      return NULL;
+    }
+    ros_secure_root_size = strlen(ros_secure_root_env);
+    if (!ros_secure_root_size) {
+      return NULL;  // environment variable was empty
+    } else {
+      ros_secure_node_override = false;
+    }
   }
-  char * node_secure_root = rcutils_join_path(ros_secure_root_env, node_name, *allocator);
-  if (!rcutils_is_directory(node_secure_root)) {
+  char * node_secure_root = NULL;
+  if (ros_secure_node_override) {
+    node_secure_root =
+      (char *)allocator->allocate(ros_secure_root_size + 1, allocator->state);
+    memcpy(node_secure_root, ros_secure_root_env, ros_secure_root_size + 1);
+    // TODO(ros2team): This make an assumption on the value and length of the root namespace.
+    // This should likely come from another (rcl/rmw?) function for reuse.
+    // If the namespace is the root namespace ("/"), the secure root is just the node name.
+  } else if (strlen(node_namespace) == 1) {
+    node_secure_root = rcutils_join_path(ros_secure_root_env, node_name, *allocator);
+  } else {
+    char * node_fqn = NULL;
+    char * node_root_path = NULL;
+    // Combine node namespace with node name
+    // TODO(ros2team): remove the hard-coded value of the root namespace.
+    node_fqn = rcutils_format_string(*allocator, "%s%s%s", node_namespace, "/", node_name);
+    // Get native path, ignore the leading forward slash.
+    // TODO(ros2team): remove the hard-coded length, use the length of the root namespace instead.
+    node_root_path = rcutils_to_native_path(node_fqn + 1, *allocator);
+    node_secure_root = rcutils_join_path(ros_secure_root_env, node_root_path, *allocator);
+    allocator->deallocate(node_fqn, allocator->state);
+    allocator->deallocate(node_root_path, allocator->state);
+  }
+  // Check node_secure_root is not NULL before checking directory
+  if (NULL == node_secure_root) {
+    allocator->deallocate(node_secure_root, allocator->state);
+    return NULL;
+  } else if (!rcutils_is_directory(node_secure_root)) {
     allocator->deallocate(node_secure_root, allocator->state);
     return NULL;
   }
@@ -135,6 +191,7 @@ rcl_node_init(
   rcl_node_t * node,
   const char * name,
   const char * namespace_,
+  rcl_context_t * context,
   const rcl_node_options_t * options)
 {
   size_t domain_id = 0;
@@ -161,8 +218,12 @@ rcl_node_init(
     return RCL_RET_ALREADY_INIT;
   }
   // Make sure rcl has been initialized.
-  if (!rcl_ok()) {
-    RCL_SET_ERROR_MSG("rcl_init() has not been called");
+  RCL_CHECK_FOR_NULL_WITH_MSG(
+    context, "given context in options is NULL", return RCL_RET_INVALID_ARGUMENT);
+  if (!rcl_context_is_valid(context)) {
+    RCL_SET_ERROR_MSG(
+      "the given context is not valid, "
+      "either rcl_init() was not called or rcl_shutdown() was called.");
     return RCL_RET_NOT_INIT;
   }
   // Make sure the node name is valid before allocating memory.
@@ -220,6 +281,7 @@ rcl_node_init(
   node->impl->graph_guard_condition = NULL;
   node->impl->logger_name = NULL;
   node->impl->options = rcl_node_get_default_options();
+  node->context = context;
   // Initialize node impl.
   ret = rcl_node_options_copy(options, &(node->impl->options));
   if (RCL_RET_OK != ret) {
@@ -229,7 +291,7 @@ rcl_node_init(
   // Remap the node name and namespace if remap rules are given
   rcl_arguments_t * global_args = NULL;
   if (node->impl->options.use_global_arguments) {
-    global_args = rcl_get_global_arguments();
+    global_args = &(node->context->global_arguments);
   }
   ret = rcl_remap_node_name(
     &(node->impl->options.arguments), global_args, name, *allocator,
@@ -312,27 +374,28 @@ rcl_node_init(
     node_security_options.enforce_security = RMW_SECURITY_ENFORCEMENT_PERMISSIVE;
   } else {  // if use_security
     // File discovery magic here
-    const char * node_secure_root = rcl_get_secure_root(name, allocator);
+    const char * node_secure_root = rcl_get_secure_root(name, local_namespace_, allocator);
     if (node_secure_root) {
       node_security_options.security_root_path = node_secure_root;
     } else {
       if (RMW_SECURITY_ENFORCEMENT_ENFORCE == node_security_options.enforce_security) {
         RCL_SET_ERROR_MSG(
           "SECURITY ERROR: unable to find a folder matching the node name in the "
+          RCUTILS_STRINGIFY(ROS_SECURITY_NODE_DIRECTORY_VAR_NAME)
+          " or "
           RCUTILS_STRINGIFY(ROS_SECURITY_ROOT_DIRECTORY_VAR_NAME)
-          " directory while the requested security strategy requires it");
+          " directories while the requested security strategy requires it");
         ret = RCL_RET_ERROR;
         goto cleanup;
       }
     }
   }
   node->impl->rmw_node_handle = rmw_create_node(
+    &(node->context->impl->rmw_context),
     name, local_namespace_, domain_id, &node_security_options);
 
   RCL_CHECK_FOR_NULL_WITH_MSG(
     node->impl->rmw_node_handle, rmw_get_error_string().str, goto fail);
-  // instance id
-  node->impl->rcl_instance_id = rcl_get_instance_id();
   // graph guard condition
   rmw_graph_guard_condition = rmw_node_get_graph_guard_condition(node->impl->rmw_node_handle);
   RCL_CHECK_FOR_NULL_WITH_MSG(
@@ -349,6 +412,7 @@ rcl_node_init(
   ret = rcl_guard_condition_init_from_rmw(
     node->impl->graph_guard_condition,
     rmw_graph_guard_condition,
+    context,
     graph_guard_condition_options);
   if (ret != RCL_RET_OK) {
     // error message already set
@@ -444,16 +508,26 @@ rcl_node_fini(rcl_node_t * node)
 }
 
 bool
-rcl_node_is_valid(const rcl_node_t * node)
+rcl_node_is_valid_except_context(const rcl_node_t * node)
 {
   RCL_CHECK_FOR_NULL_WITH_MSG(node, "rcl node pointer is invalid", return false);
   RCL_CHECK_FOR_NULL_WITH_MSG(node->impl, "rcl node implementation is invalid", return false);
-  if (node->impl->rcl_instance_id != rcl_get_instance_id()) {
-    RCL_SET_ERROR_MSG("rcl node is invalid, rcl instance id does not match");
-    return false;
-  }
   RCL_CHECK_FOR_NULL_WITH_MSG(
     node->impl->rmw_node_handle, "rcl node's rmw handle is invalid", return false);
+  return true;
+}
+
+bool
+rcl_node_is_valid(const rcl_node_t * node)
+{
+  bool result = rcl_node_is_valid_except_context(node);
+  if (!result) {
+    return result;
+  }
+  if (!rcl_context_is_valid(node->context)) {
+    RCL_SET_ERROR_MSG("rcl node's context is invalid");
+    return false;
+  }
   return true;
 }
 
@@ -495,7 +569,7 @@ rcl_node_options_copy(
 const char *
 rcl_node_get_name(const rcl_node_t * node)
 {
-  if (!rcl_node_is_valid(node)) {
+  if (!rcl_node_is_valid_except_context(node)) {
     return NULL;  // error already set
   }
   return node->impl->rmw_node_handle->name;
@@ -504,7 +578,7 @@ rcl_node_get_name(const rcl_node_t * node)
 const char *
 rcl_node_get_namespace(const rcl_node_t * node)
 {
-  if (!rcl_node_is_valid(node)) {
+  if (!rcl_node_is_valid_except_context(node)) {
     return NULL;  // error already set
   }
   return node->impl->rmw_node_handle->namespace_;
@@ -513,7 +587,7 @@ rcl_node_get_namespace(const rcl_node_t * node)
 const rcl_node_options_t *
 rcl_node_get_options(const rcl_node_t * node)
 {
-  if (!rcl_node_is_valid(node)) {
+  if (!rcl_node_is_valid_except_context(node)) {
     return NULL;  // error already set
   }
   return &node->impl->options;
@@ -534,7 +608,7 @@ rcl_node_get_domain_id(const rcl_node_t * node, size_t * domain_id)
 rmw_node_t *
 rcl_node_get_rmw_handle(const rcl_node_t * node)
 {
-  if (!rcl_node_is_valid(node)) {
+  if (!rcl_node_is_valid_except_context(node)) {
     return NULL;  // error already set
   }
   return node->impl->rmw_node_handle;
@@ -543,17 +617,16 @@ rcl_node_get_rmw_handle(const rcl_node_t * node)
 uint64_t
 rcl_node_get_rcl_instance_id(const rcl_node_t * node)
 {
-  // Not using rcl_node_is_valid() since we can still get the
-  // instance ID from an initialized node, even if it is invalid
-  RCL_CHECK_ARGUMENT_FOR_NULL(node, 0);
-  RCL_CHECK_FOR_NULL_WITH_MSG(node->impl, "node implementation is invalid", return 0);
-  return node->impl->rcl_instance_id;
+  if (!rcl_node_is_valid_except_context(node)) {
+    return 0;  // error already set
+  }
+  return rcl_context_get_instance_id(node->context);
 }
 
 const struct rcl_guard_condition_t *
 rcl_node_get_graph_guard_condition(const rcl_node_t * node)
 {
-  if (!rcl_node_is_valid(node)) {
+  if (!rcl_node_is_valid_except_context(node)) {
     return NULL;  // error already set
   }
   return node->impl->graph_guard_condition;
@@ -562,7 +635,7 @@ rcl_node_get_graph_guard_condition(const rcl_node_t * node)
 const char *
 rcl_node_get_logger_name(const rcl_node_t * node)
 {
-  if (!rcl_node_is_valid(node)) {
+  if (!rcl_node_is_valid_except_context(node)) {
     return NULL;  // error already set
   }
   return node->impl->logger_name;

@@ -22,6 +22,7 @@ extern "C"
 #include <stdio.h>
 #include <string.h>
 
+#include "./common.h"
 #include "rcl/allocator.h"
 #include "rcl/error_handling.h"
 #include "rcl/expand_topic_name.h"
@@ -34,6 +35,7 @@ extern "C"
 typedef struct rcl_publisher_impl_t
 {
   rcl_publisher_options_t options;
+  rcl_context_t * context;
   rmw_publisher_t * rmw_handle;
 } rcl_publisher_impl_t;
 
@@ -129,7 +131,7 @@ rcl_publisher_init(
   }
   rcl_arguments_t * global_args = NULL;
   if (node_options->use_global_arguments) {
-    global_args = rcl_get_global_arguments();
+    global_args = &(node->context->global_arguments);
   }
   ret = rcl_remap_topic_name(
     &(node_options->arguments), global_args, expanded_topic_name,
@@ -172,6 +174,8 @@ rcl_publisher_init(
   // options
   publisher->impl->options = *options;
   RCUTILS_LOG_DEBUG_NAMED(ROS_PACKAGE_NAME, "Publisher initialized");
+  // context
+  publisher->impl->context = node->context;
   goto cleanup;
 fail:
   if (publisher->impl) {
@@ -194,7 +198,7 @@ rcl_publisher_fini(rcl_publisher_t * publisher, rcl_node_t * node)
 {
   rcl_ret_t result = RCL_RET_OK;
   RCL_CHECK_ARGUMENT_FOR_NULL(publisher, RCL_RET_PUBLISHER_INVALID);
-  if (!rcl_node_is_valid(node)) {
+  if (!rcl_node_is_valid_except_context(node)) {
     return RCL_RET_NODE_INVALID;  // error already set
   }
 
@@ -231,7 +235,6 @@ rcl_publisher_get_default_options()
 rcl_ret_t
 rcl_publish(const rcl_publisher_t * publisher, const void * ros_message)
 {
-  RCUTILS_LOG_DEBUG_NAMED(ROS_PACKAGE_NAME, "Publisher publishing message");
   if (!rcl_publisher_is_valid(publisher)) {
     return RCL_RET_PUBLISHER_INVALID;  // error already set
   }
@@ -265,7 +268,7 @@ rcl_publish_serialized_message(
 const char *
 rcl_publisher_get_topic_name(const rcl_publisher_t * publisher)
 {
-  if (!rcl_publisher_is_valid(publisher)) {
+  if (!rcl_publisher_is_valid_except_context(publisher)) {
     return NULL;  // error already set
   }
   return publisher->impl->rmw_handle->topic_name;
@@ -276,7 +279,7 @@ rcl_publisher_get_topic_name(const rcl_publisher_t * publisher)
 const rcl_publisher_options_t *
 rcl_publisher_get_options(const rcl_publisher_t * publisher)
 {
-  if (!rcl_publisher_is_valid(publisher)) {
+  if (!rcl_publisher_is_valid_except_context(publisher)) {
     return NULL;  // error already set
   }
   return _publisher_get_options(publisher);
@@ -285,14 +288,38 @@ rcl_publisher_get_options(const rcl_publisher_t * publisher)
 rmw_publisher_t *
 rcl_publisher_get_rmw_handle(const rcl_publisher_t * publisher)
 {
-  if (!rcl_publisher_is_valid(publisher)) {
+  if (!rcl_publisher_is_valid_except_context(publisher)) {
     return NULL;  // error already set
   }
   return publisher->impl->rmw_handle;
 }
 
+rcl_context_t *
+rcl_publisher_get_context(const rcl_publisher_t * publisher)
+{
+  if (!rcl_publisher_is_valid_except_context(publisher)) {
+    return NULL;  // error already set
+  }
+  return publisher->impl->context;
+}
+
 bool
 rcl_publisher_is_valid(const rcl_publisher_t * publisher)
+{
+  if (!rcl_publisher_is_valid_except_context(publisher)) {
+    return false;  // error already set
+  }
+  if (!rcl_context_is_valid(publisher->impl->context)) {
+    RCL_SET_ERROR_MSG("publisher's context is invalid");
+    return false;
+  }
+  RCL_CHECK_FOR_NULL_WITH_MSG(
+    publisher->impl->rmw_handle, "publisher's rmw handle is invalid", return false);
+  return true;
+}
+
+bool
+rcl_publisher_is_valid_except_context(const rcl_publisher_t * publisher)
 {
   RCL_CHECK_FOR_NULL_WITH_MSG(publisher, "publisher pointer is invalid", return false);
   RCL_CHECK_FOR_NULL_WITH_MSG(
@@ -300,6 +327,26 @@ rcl_publisher_is_valid(const rcl_publisher_t * publisher)
   RCL_CHECK_FOR_NULL_WITH_MSG(
     publisher->impl->rmw_handle, "publisher's rmw handle is invalid", return false);
   return true;
+}
+
+rmw_ret_t
+rcl_publisher_get_subscription_count(
+  const rcl_publisher_t * publisher,
+  size_t * subscription_count)
+{
+  if (!rcl_publisher_is_valid(publisher)) {
+    return RCL_RET_PUBLISHER_INVALID;
+  }
+  RCL_CHECK_ARGUMENT_FOR_NULL(subscription_count, RCL_RET_INVALID_ARGUMENT);
+
+  rmw_ret_t ret = rmw_publisher_count_matched_subscriptions(publisher->impl->rmw_handle,
+      subscription_count);
+
+  if (ret != RMW_RET_OK) {
+    RCL_SET_ERROR_MSG(rmw_get_error_string().str);
+    return rcl_convert_rmw_ret_to_rcl_ret(ret);
+  }
+  return RCL_RET_OK;
 }
 
 #ifdef __cplusplus

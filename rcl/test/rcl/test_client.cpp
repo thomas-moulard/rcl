@@ -28,17 +28,28 @@
 class TestClientFixture : public ::testing::Test
 {
 public:
+  rcl_context_t * context_ptr;
   rcl_node_t * node_ptr;
   void SetUp()
   {
     rcl_ret_t ret;
-    ret = rcl_init(0, nullptr, rcl_get_default_allocator());
-    ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+    {
+      rcl_init_options_t init_options = rcl_get_zero_initialized_init_options();
+      ret = rcl_init_options_init(&init_options, rcl_get_default_allocator());
+      ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+      OSRF_TESTING_TOOLS_CPP_SCOPE_EXIT({
+        EXPECT_EQ(RCL_RET_OK, rcl_init_options_fini(&init_options)) << rcl_get_error_string().str;
+      });
+      this->context_ptr = new rcl_context_t;
+      *this->context_ptr = rcl_get_zero_initialized_context();
+      ret = rcl_init(0, nullptr, &init_options, this->context_ptr);
+      ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+    }
     this->node_ptr = new rcl_node_t;
     *this->node_ptr = rcl_get_zero_initialized_node();
     const char * name = "test_client_node";
     rcl_node_options_t node_options = rcl_node_get_default_options();
-    ret = rcl_node_init(this->node_ptr, name, "", &node_options);
+    ret = rcl_node_init(this->node_ptr, name, "", this->context_ptr, &node_options);
     ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
   }
 
@@ -47,7 +58,8 @@ public:
     rcl_ret_t ret = rcl_node_fini(this->node_ptr);
     delete this->node_ptr;
     EXPECT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
-    ret = rcl_shutdown();
+    ret = rcl_shutdown(this->context_ptr);
+    delete this->context_ptr;
     EXPECT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
   }
 };
@@ -64,7 +76,7 @@ TEST_F(TestClientFixture, test_client_nominal) {
   rcl_client_options_t client_options = rcl_client_get_default_options();
 
   const rosidl_service_type_support_t * ts = ROSIDL_GET_SRV_TYPE_SUPPORT(
-    test_msgs, Primitives);
+    test_msgs, srv, Primitives);
   ret = rcl_client_init(&client, this->node_ptr, ts, topic_name, &client_options);
 
   // Check the return code of initialization and that the service name matches what's expected
@@ -98,7 +110,7 @@ TEST_F(TestClientFixture, test_client_init_fini) {
   rcl_client_t client;
 
   const rosidl_service_type_support_t * ts = ROSIDL_GET_SRV_TYPE_SUPPORT(
-    test_msgs, Primitives);
+    test_msgs, srv, Primitives);
   const char * topic_name = "chatter";
   rcl_client_options_t default_client_options = rcl_client_get_default_options();
 

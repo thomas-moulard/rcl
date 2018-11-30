@@ -19,6 +19,7 @@
 #include "rcl_action/names.h"
 
 #include "rcl/allocator.h"
+#include "rcl/error_handling.h"
 #include "rcl/types.h"
 
 struct ActionDerivedNameTestSubject
@@ -48,18 +49,22 @@ protected:
 
 TEST_P(TestActionDerivedName, validate_action_derived_getter)
 {
-  rcl_ret_t ret;
-  char dummy_char;
-  char * action_derived_name;
-  rcl_allocator_t default_allocator =
-    rcl_get_default_allocator();
+  rcl_allocator_t default_allocator = rcl_get_default_allocator();
+
+  char * action_derived_name = NULL;
+  const char * const null_action_name = NULL;
+  rcl_ret_t ret = test_subject.get_action_derived_name(
+    null_action_name, default_allocator,
+    &action_derived_name);
+  EXPECT_EQ(RCL_RET_INVALID_ARGUMENT, ret);
 
   action_derived_name = NULL;
-  const char * const invalid_action_name = NULL;
+  const char * const invalid_action_name = "";
   ret = test_subject.get_action_derived_name(
     invalid_action_name, default_allocator,
     &action_derived_name);
-  EXPECT_EQ(RCL_RET_INVALID_ARGUMENT, ret);
+  EXPECT_EQ(RCL_RET_ACTION_NAME_INVALID, ret) << rcl_get_error_string().str;
+  rcl_reset_error();
 
   action_derived_name = NULL;
   rcl_allocator_t invalid_allocator =
@@ -67,26 +72,30 @@ TEST_P(TestActionDerivedName, validate_action_derived_getter)
   ret = test_subject.get_action_derived_name(
     test_subject.action_name, invalid_allocator,
     &action_derived_name);
-  EXPECT_EQ(RCL_RET_INVALID_ARGUMENT, ret);
+  EXPECT_EQ(RCL_RET_INVALID_ARGUMENT, ret) << rcl_get_error_string().str;
+  rcl_reset_error();
 
   action_derived_name = NULL;
   char ** invalid_ptr_to_action_derived_name = NULL;
   ret = test_subject.get_action_derived_name(
     test_subject.action_name, default_allocator,
     invalid_ptr_to_action_derived_name);
-  EXPECT_EQ(RCL_RET_INVALID_ARGUMENT, ret);
+  EXPECT_EQ(RCL_RET_INVALID_ARGUMENT, ret) << rcl_get_error_string().str;
+  rcl_reset_error();
 
+  char dummy_char = '\0';
   action_derived_name = &dummy_char;
   ret = test_subject.get_action_derived_name(
     test_subject.action_name, default_allocator,
     &action_derived_name);
-  EXPECT_EQ(RCL_RET_INVALID_ARGUMENT, ret);
+  EXPECT_EQ(RCL_RET_INVALID_ARGUMENT, ret) << rcl_get_error_string().str;
+  rcl_reset_error();
 
   action_derived_name = NULL;
   ret = test_subject.get_action_derived_name(
     test_subject.action_name, default_allocator,
     &action_derived_name);
-  ASSERT_EQ(RCL_RET_OK, ret);
+  ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
   EXPECT_STREQ(test_subject.expected_action_derived_name, action_derived_name);
   default_allocator.deallocate(action_derived_name, default_allocator.state);
 }

@@ -37,17 +37,28 @@
 class CLASSNAME (TestServiceFixture, RMW_IMPLEMENTATION) : public ::testing::Test
 {
 public:
+  rcl_context_t * context_ptr;
   rcl_node_t * node_ptr;
   void SetUp()
   {
     rcl_ret_t ret;
-    ret = rcl_init(0, nullptr, rcl_get_default_allocator());
-    ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+    {
+      rcl_init_options_t init_options = rcl_get_zero_initialized_init_options();
+      ret = rcl_init_options_init(&init_options, rcl_get_default_allocator());
+      ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+      OSRF_TESTING_TOOLS_CPP_SCOPE_EXIT({
+        EXPECT_EQ(RCL_RET_OK, rcl_init_options_fini(&init_options)) << rcl_get_error_string().str;
+      });
+      this->context_ptr = new rcl_context_t;
+      *this->context_ptr = rcl_get_zero_initialized_context();
+      ret = rcl_init(0, nullptr, &init_options, this->context_ptr);
+      ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+    }
     this->node_ptr = new rcl_node_t;
     *this->node_ptr = rcl_get_zero_initialized_node();
     const char * name = "test_service_node";
     rcl_node_options_t node_options = rcl_node_get_default_options();
-    ret = rcl_node_init(this->node_ptr, name, "", &node_options);
+    ret = rcl_node_init(this->node_ptr, name, "", this->context_ptr, &node_options);
     ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
   }
 
@@ -56,7 +67,10 @@ public:
     rcl_ret_t ret = rcl_node_fini(this->node_ptr);
     delete this->node_ptr;
     EXPECT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
-    ret = rcl_shutdown();
+    ret = rcl_shutdown(this->context_ptr);
+    EXPECT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
+    ret = rcl_context_fini(this->context_ptr);
+    delete this->context_ptr;
     EXPECT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
   }
 };
@@ -80,7 +94,7 @@ wait_for_service_to_be_ready(
     ++iteration;
     ret = rcl_wait_set_clear(&wait_set);
     ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
-    ret = rcl_wait_set_add_service(&wait_set, service);
+    ret = rcl_wait_set_add_service(&wait_set, service, NULL);
     ASSERT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
     ret = rcl_wait(&wait_set, RCL_MS_TO_NS(period_ms));
     if (ret == RCL_RET_TIMEOUT) {
@@ -102,7 +116,7 @@ wait_for_service_to_be_ready(
 TEST_F(CLASSNAME(TestServiceFixture, RMW_IMPLEMENTATION), test_service_nominal) {
   rcl_ret_t ret;
   const rosidl_service_type_support_t * ts = ROSIDL_GET_SRV_TYPE_SUPPORT(
-    test_msgs, Primitives);
+    test_msgs, srv, Primitives);
   const char * topic = "primitives";
   const char * expected_topic = "/primitives";
 

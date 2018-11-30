@@ -39,7 +39,7 @@ rcl_action_get_zero_initialized_goal_handle(void)
 rcl_ret_t
 rcl_action_goal_handle_init(
   rcl_action_goal_handle_t * goal_handle,
-  rcl_action_goal_info_t * goal_info,
+  const rcl_action_goal_info_t * goal_info,
   rcl_allocator_t allocator)
 {
   RCL_CHECK_ARGUMENT_FOR_NULL(goal_handle, RCL_RET_INVALID_ARGUMENT);
@@ -135,6 +135,18 @@ rcl_action_goal_handle_is_active(const rcl_action_goal_handle_t * goal_handle)
     default:
       return false;
   }
+}
+
+bool
+rcl_action_goal_handle_is_cancelable(const rcl_action_goal_handle_t * goal_handle)
+{
+  if (!rcl_action_goal_handle_is_valid(goal_handle)) {
+    return false;  // error message is set
+  }
+  // Check if the state machine reports a cancel event is valid
+  rcl_action_goal_state_t state = rcl_action_transition_goal_state(
+    goal_handle->impl->state, GOAL_EVENT_CANCEL);
+  return GOAL_STATE_CANCELING == state;
 }
 
 bool
