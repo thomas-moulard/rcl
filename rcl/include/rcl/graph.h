@@ -84,12 +84,12 @@ RCL_PUBLIC
 RCL_WARN_UNUSED
 rcl_ret_t
 rcl_get_publisher_names_and_types_by_node(
-        const rcl_node_t * node,
-        rcl_allocator_t * allocator,
-        bool no_demangle,
-        const char * node_name,
-        const char * node_namespace,
-        rcl_names_and_types_t * topic_names_and_types);
+  const rcl_node_t * node,
+  rcl_allocator_t * allocator,
+  bool no_demangle,
+  const char * node_name,
+  const char * node_namespace,
+  rcl_names_and_types_t * topic_names_and_types);
 
 /// Return a list of subcriber topic names and their types per node.
 /**
@@ -138,12 +138,12 @@ rcl_get_publisher_names_and_types_by_node(
 RCL_WARN_UNUSED
 rcl_ret_t
 rcl_get_subscriber_names_and_types_by_node(
-        const rcl_node_t * node,
-        rcl_allocator_t * allocator,
-        bool no_demangle,
-        const char * node_name,
-        const char * node_namespace,
-        rcl_names_and_types_t * topic_names_and_types);
+  const rcl_node_t * node,
+  rcl_allocator_t * allocator,
+  bool no_demangle,
+  const char * node_name,
+  const char * node_namespace,
+  rcl_names_and_types_t * topic_names_and_types);
 
 /// Return a list of service names and their types per node.
 /**
@@ -192,11 +192,11 @@ RCL_PUBLIC
 RCL_WARN_UNUSED
 rcl_ret_t
 rcl_get_service_names_and_types_by_node(
-        const rcl_node_t * node,
-        rcl_allocator_t * allocator,
-        const char * node_name,
-        const char * node_namespace,
-        rcl_names_and_types_t * service_names_and_types);
+  const rcl_node_t * node,
+  rcl_allocator_t * allocator,
+  const char * node_name,
+  const char * node_namespace,
+  rcl_names_and_types_t * service_names_and_types);
 
 /// Return a list of topic names and their types.
 /**
