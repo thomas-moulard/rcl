@@ -370,7 +370,6 @@ void expect_topics_types(
   if (expect) {
     EXPECT_EQ(num_topics, nat.names.size);
   }
-
 }
 
 /**
@@ -580,7 +579,6 @@ TEST_F(NodeGraphMultiNodeFixture, test_node_info_publishers)
   EXPECT_EQ(RCL_RET_OK, ret) << rcl_get_error_string().str;
   rcl_reset_error();
   VerifySubsystemCount(expected_node_state{0, 0, 0}, expected_node_state{0, 0, 0});
-
 }
 
 TEST_F(NodeGraphMultiNodeFixture, test_node_info_services)
